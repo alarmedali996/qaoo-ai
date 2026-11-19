@@ -2,59 +2,68 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // AI Chat API
     if (url.pathname === "/api/chat" && request.method === "POST") {
       try {
         const data = await request.json();
 
         if (!Array.isArray(data.messages) || data.messages.length === 0) {
           return Response.json(
-            { error: "Please send a message." },
+            { error: "Please send a message" },
             { status: 400 }
           );
         }
 
-        const messages = [
+        const response = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" +
+          encodeURIComponent(env.GEMINI_API_KEY),
           {
-            role: "system",
-            content: `You are QAOO AI, an intelligent and helpful AI assistant.
-            Answer clearly and accurately.
-            Support Arabic, English, and Amharic.
-            Follow the language used by the user.
-            Help with science, education, coding, technology,
-            mathematics, creativity, and general questions.`
-          },
-          ...data.messages.slice(-20).map(message => ({
-            role: message.role === "assistant" ? "assistant" : "user",
-            content: String(message.content).slice(0, 5000)
-          }))
-        ];
-
-        const result = await env.AI.run(
-          "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-          {
-            messages,
-            max_tokens: 1024
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              systemInstruction: {
+                parts: [{
+                  text: "You are QAOO AI, a helpful intelligent assistant. Support Arabic, English and Amharic. Answer clearly and accurately."
+                }]
+              },
+              contents: data.messages.slice(-20).map(m => ({
+                role: m.role === "assistant" ? "model" : "user",
+                parts: [{ text: String(m.content).slice(0, 5000) }]
+              })),
+              generationConfig: {
+                maxOutputTokens: 1024
+              }
+            })
           }
         );
 
+        const result = await response.json();
+
+        if (!response.ok) {
+          return Response.json(
+            { error: result.error?.message || "Gemini API error" },
+            { status: 502 }
+          );
+        }
+
+        const reply =
+          result.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("") ||
+          "No response received.";
+
         return Response.json({
           success: true,
-          reply: result.response
+          reply
         });
 
       } catch (error) {
         return Response.json(
-          {
-            success: false,
-            error: "QAOO AI encountered an error. Please try again."
-          },
+          { error: "Server error: " + error.message },
           { status: 500 }
         );
       }
     }
 
-    // Website files
     return env.ASSETS.fetch(request);
   }
 };
