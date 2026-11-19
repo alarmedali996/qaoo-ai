@@ -4,36 +4,44 @@ export default {
 
     if (url.pathname === "/api/chat" && request.method === "POST") {
       try {
+        if (!env.GEMINI_API_KEY) {
+          return Response.json(
+            { error: "Gemini API key is missing." },
+            { status: 500 }
+          );
+        }
+
         const data = await request.json();
 
-        if (!Array.isArray(data.messages) || data.messages.length === 0) {
+        if (!Array.isArray(data.messages) || !data.messages.length) {
           return Response.json(
-            { error: "Please send a message" },
+            { error: "Please send a message." },
             { status: 400 }
           );
         }
 
+        const conversation = data.messages.slice(-20).map(m => {
+          const role = m.role === "assistant" ? "QAOO AI" : "User";
+          return role + ": " + String(m.content).slice(0, 5000);
+        }).join("\n\n");
+
         const response = await fetch(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" +
-          encodeURIComponent(env.GEMINI_API_KEY),
+          "https://generativelanguage.googleapis.com/v1beta/interactions",
           {
             method: "POST",
             headers: {
-              "Content-Type": "application/json"
+              "Content-Type": "application/json",
+              "x-goog-api-key": env.GEMINI_API_KEY
             },
             body: JSON.stringify({
-              systemInstruction: {
-                parts: [{
-                  text: "You are QAOO AI, a helpful intelligent assistant. Support Arabic, English and Amharic. Answer clearly and accurately."
-                }]
-              },
-              contents: data.messages.slice(-20).map(m => ({
-                role: m.role === "assistant" ? "model" : "user",
-                parts: [{ text: String(m.content).slice(0, 5000) }]
-              })),
-              generationConfig: {
-                maxOutputTokens: 1024
-              }
+              model: "gemini-3.8-flash",
+              input:
+                "You are QAOO AI, an intelligent and friendly AI assistant. " +
+                "Support Arabic, English, and Amharic. " +
+                "Answer accurately and clearly. " +
+                "The conversation history follows:\n\n" +
+                conversation +
+                "\n\nQAOO AI:"
             })
           }
         );
@@ -42,14 +50,27 @@ export default {
 
         if (!response.ok) {
           return Response.json(
-            { error: result.error?.message || "Gemini API error" },
-            { status: 502 }
+            {
+              error: result.error?.message || "Gemini API request failed."
+            },
+            { status: response.status }
           );
         }
 
         const reply =
-          result.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("") ||
-          "No response received.";
+          result.steps
+            ?.filter(step => step.type === "model_output")
+            .flatMap(step => step.content || [])
+            .filter(item => item.type === "text")
+            .map(item => item.text)
+            .join("\n") || "";
+
+        if (!reply) {
+          return Response.json(
+            { error: "Gemini returned an empty response." },
+            { status: 502 }
+          );
+        }
 
         return Response.json({
           success: true,
